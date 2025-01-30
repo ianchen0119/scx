@@ -39,6 +39,16 @@ func main() {
 		log.Printf("bpfModule attach failed: %v", err)
 	}
 
+	go func() {
+		for {
+			task := bpfModule.GetTaskFromQueue()
+			if task != nil {
+				dispatchedTask := core.NewDispatchedTask(task)
+				bpfModule.DispatchTask(dispatchedTask)
+			}
+		}
+	}()
+
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
 	<-signalChan

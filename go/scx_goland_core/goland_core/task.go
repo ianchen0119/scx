@@ -3,8 +3,6 @@ package core
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/gob"
-	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -57,13 +55,14 @@ func NewDispatchedTask(task *QueuedTask) *DispatchedTask {
 }
 
 func (s *Sched) DispatchTask(t *DispatchedTask) {
-	var task bytes.Buffer        // Stand-in for a network connection
-	enc := gob.NewEncoder(&task) // Will write to network.
-	// Encode (send) the value.
-	err := enc.Encode(t)
-	if err != nil {
-		log.Fatal("encode error:", err)
-	}
+	var task bytes.Buffer // Stand-in for a network connection
+	// enc := gob.NewEncoder(&task) // Will write to network.
+	// // Encode (send) the value.
+	// err := enc.Encode(t)
+	// if err != nil {
+	// 	log.Fatal("encode error:", err)
+	// }
+	binary.Write(&task, binary.LittleEndian, t)
 	s.dispatch <- task.Bytes()
 }
 

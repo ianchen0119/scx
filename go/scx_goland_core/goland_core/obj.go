@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"log"
 
 	bpf "github.com/aquasecurity/libbpfgo"
 )
@@ -93,7 +92,7 @@ type task_cpu_arg struct {
 	flags uint64
 }
 
-func (s *Sched) SelectCPU(t *QueuedTask) error {
+func (s *Sched) SelectCPU(t *QueuedTask) (error, int32) {
 	if s.selectCpu != nil {
 		arg := &task_cpu_arg{
 			pid:   t.Pid,
@@ -103,17 +102,47 @@ func (s *Sched) SelectCPU(t *QueuedTask) error {
 		var data bytes.Buffer
 		binary.Write(&data, binary.LittleEndian, arg)
 		opt := bpf.RunOpts{
-			CtxIn: data.Bytes(),
+			CtxIn:     data.Bytes(),
+			CtxSizeIn: uint32(data.Len()),
 		}
 		err := s.selectCpu.Run(&opt)
 		if err != nil {
-			log.Println(err)
+			return err, 0
+		}
+		if opt.RetVal > 2147483647 {
+			return nil, -1
+		}
+		return nil, int32(opt.RetVal)
+	}
+	return fmt.Errorf("prog (selectCpu) not found"), 0
+}
+
+type domain_arg struct {
+	lvlId        int32
+	cpuId        int32
+	siblingCpuId int32
+}
+
+func (s *Sched) EnableSiblingCpu(lvlId, cpuId, siblingCpuId int32) error {
+	if s.siblingCpu != nil {
+		arg := &domain_arg{
+			lvlId:        lvlId,
+			cpuId:        cpuId,
+			siblingCpuId: siblingCpuId,
+		}
+		var data bytes.Buffer
+		binary.Write(&data, binary.LittleEndian, arg)
+		opt := bpf.RunOpts{
+			CtxIn:     data.Bytes(),
+			CtxSizeIn: uint32(data.Len()),
+		}
+		err := s.siblingCpu.Run(&opt)
+		if err != nil {
 			return err
 		}
-		log.Println(opt.RetVal)
 		return nil
 	}
-	return fmt.Errorf("selectCpu not found")
+	return fmt.Errorf("prog (siblingCpu) not found")
 }
 
 func (s *Sched) Attach() error {

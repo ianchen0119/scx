@@ -1,6 +1,8 @@
 package core
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"unsafe"
 
@@ -9,7 +11,7 @@ import (
 
 type BssData struct {
 	Usersched_pid        uint32
-	paid                 uint32
+	Paid                 uint32
 	Nr_queued            uint64
 	Nr_scheduled         uint64
 	Nr_running           uint64
@@ -24,6 +26,65 @@ type BssData struct {
 
 type BssMap struct {
 	*bpf.BPFMap
+}
+
+func (s *Sched) NotifyComplete(nr_pending uint64) error {
+	if s.bss == nil {
+		return fmt.Errorf("BssMap is nil")
+	}
+	err, bss := s.GetBssData()
+	if err != nil {
+		return err
+	}
+	i := 0
+	bss.Nr_scheduled = nr_pending
+	return s.bss.BPFMap.Update(unsafe.Pointer(&i), unsafe.Pointer(&bss))
+}
+
+func (s *Sched) GetBssData() (error, BssData) {
+	if s.bss == nil {
+		return fmt.Errorf("BssMap is nil"), BssData{}
+	}
+	i := 0
+	b, err := s.bss.BPFMap.GetValue(unsafe.Pointer(&i))
+	if err != nil {
+		return err, BssData{}
+	}
+	var bss BssData
+	buff := bytes.NewBuffer(b)
+	err = binary.Read(buff, binary.LittleEndian, &bss)
+	if err != nil {
+		return err, BssData{}
+	}
+	return nil, bss
+}
+
+func (s *Sched) SubNrQueued() error {
+	if s.bss == nil {
+		return fmt.Errorf("BssMap is nil")
+	}
+	err, bss := s.GetBssData()
+	if err != nil {
+		return err
+	}
+	var val uint64 = 0
+	if bss.Nr_queued > 1 {
+		val = bss.Nr_queued - 1
+	}
+	return s.AssignNrQueued(val)
+}
+
+func (s *Sched) AssignNrQueued(n uint64) error {
+	if s.bss == nil {
+		return fmt.Errorf("BssMap is nil")
+	}
+	i := 0
+	err, bss := s.GetBssData()
+	if err != nil {
+		return err
+	}
+	bss.Nr_queued = n
+	return s.bss.BPFMap.Update(unsafe.Pointer(&i), unsafe.Pointer(&bss))
 }
 
 func (s *Sched) AssignUserSchedPid(pid int) error {

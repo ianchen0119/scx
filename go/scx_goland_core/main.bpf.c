@@ -85,7 +85,7 @@ volatile u64 nr_user_dispatches, nr_kernel_dispatches,
 volatile u64 nr_failed_dispatches, nr_sched_congested;
 
  /* Report additional debugging information */
-const volatile bool debug;
+const volatile bool debug = true;
 
 /* Allow to use bpf_printk() only when @debug is set */
 #define dbg_msg(_fmt, ...) do {						\

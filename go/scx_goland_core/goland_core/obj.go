@@ -55,7 +55,7 @@ func LoadSched(objPath string) *Sched {
 			}
 			rb.Poll(300)
 		} else if m.Name() == "dispatched" {
-			s.dispatch = make(chan []byte)
+			s.dispatch = make(chan []byte, 4096)
 			urb, err := s.Module().InitUserRingBuf("dispatched", s.dispatch)
 			if err != nil {
 				panic(err)
@@ -139,6 +139,9 @@ func (s *Sched) EnableSiblingCpu(lvlId, cpuId, siblingCpuId int32) error {
 		err := s.siblingCpu.Run(&opt)
 		if err != nil {
 			return err
+		}
+		if opt.RetVal != 0 {
+			return fmt.Errorf("retVal: %v", opt.RetVal)
 		}
 		return nil
 	}

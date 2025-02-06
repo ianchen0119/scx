@@ -4,12 +4,14 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"encoding/binary"
 	"unsafe"
 
 	core "github.com/ianchen0119/scx/scx_goland_core/goland_core"
+	"github.com/ianchen0119/scx/scx_goland_core/util"
 )
 
 func endian() binary.ByteOrder {
@@ -45,15 +47,45 @@ func GetTaskFromPool() *core.QueuedTask {
 	return t
 }
 
+func init() {
+	runtime.GOMAXPROCS(1)
+}
+
 func main() {
 	bpfModule := core.LoadSched("main.bpf.o")
 	defer bpfModule.Close()
-
 	pid := os.Getpid()
-	log.Printf("pid: %v", pid)
 	err := bpfModule.AssignUserSchedPid(pid)
 	if err != nil {
 		log.Printf("AssignUserSchedPid failed: %v", err)
+	}
+	log.Printf("pid: %v", pid)
+
+	topo, err := util.GetTopology()
+	if err != nil {
+		log.Panicf("GetTopology failed: %v", err)
+	}
+	log.Printf("topology: %v", topo)
+	for _, cpuIdList := range topo["L2"] {
+		for _, cpuId := range cpuIdList {
+			for _, sibCpuId := range cpuIdList {
+				err = bpfModule.EnableSiblingCpu(2, int32(cpuId), int32(sibCpuId))
+				if err != nil {
+					log.Panicf("EnableSiblingCpu failed: lvl %v cpuId %v sibCpuId %v", 2, cpuId, sibCpuId)
+				}
+			}
+		}
+	}
+
+	for _, cpuIdList := range topo["L3"] {
+		for _, cpuId := range cpuIdList {
+			for _, sibCpuId := range cpuIdList {
+				err = bpfModule.EnableSiblingCpu(3, int32(cpuId), int32(sibCpuId))
+				if err != nil {
+					log.Panicf("EnableSiblingCpu failed: lvl %v cpuId %v sibCpuId %v", 3, cpuId, sibCpuId)
+				}
+			}
+		}
 	}
 
 	if err := bpfModule.Attach(); err != nil {
@@ -65,10 +97,11 @@ func main() {
 			DrainQueuedTask(bpfModule)
 			t := GetTaskFromPool()
 			if t == nil {
+				runtime.Gosched()
 				continue
 			}
-			_, bss := bpfModule.GetBssData()
-			log.Printf("bss: %v", bss)
+			// _, bss := bpfModule.GetBssData()
+			// log.Printf("bss: %v", bss.String())
 			task := core.NewDispatchedTask(t)
 			err, cpu := bpfModule.SelectCPU(t)
 			if err != nil {
@@ -77,12 +110,16 @@ func main() {
 			if cpu < 0 {
 				cpu = core.RL_CPU_ANY
 			}
-			task.Cpu = int32(cpu)
+			task.Cpu = cpu
 			task.SliceNs = 20000000
-			task.Vtime = 20000000
+			task.Vtime = 18446744073709551615
 			log.Printf("selected task: %d, cpu: %v, old cpu: %v, dp: %v", task.Pid, cpu, t.Cpu, task)
 			bpfModule.DispatchTask(task)
-			bpfModule.NotifyComplete(uint64(len(taskPool)))
+			err = bpfModule.NotifyComplete(uint64(len(taskPool)))
+			if err != nil {
+				log.Printf("NotifyComplete failed: %v", err)
+			}
+			runtime.Gosched()
 		}
 	}()
 

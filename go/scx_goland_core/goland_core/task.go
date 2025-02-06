@@ -38,10 +38,6 @@ func (s *Sched) DequeueTask() *QueuedTask {
 		}
 		return &task
 	default:
-		err := s.AssignNrQueued(0)
-		if err != nil {
-			log.Println(err)
-		}
 		return nil
 	}
 }

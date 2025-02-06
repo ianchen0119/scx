@@ -25,6 +25,9 @@ STATIC=-extldflags -static
 build: $(BPF_OBJ) libbpf libbpf-uapi
 	$(CGOFLAG) go build -ldflags "-w -s $(STATIC)" main.go
 
+test: build
+	vng -r v6.12.2 -- ./main
+
 .PHONY: libbpf-uapi
 libbpf-uapi: $(LIBBPF_SRC)
 	UAPIDIR=$(LIBBPF_DESTDIR) \

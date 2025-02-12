@@ -29,7 +29,8 @@ func (data BssData) String() string {
 		fmt.Sprintf("Nr_scheduled: %v, Nr_running: %v ", data.Nr_scheduled, data.Nr_running) +
 		fmt.Sprintf("Nr_online_cpus: %v, Nr_user_dispatches: %v ", data.Nr_online_cpus, data.Nr_user_dispatches) +
 		fmt.Sprintf("Nr_kernel_dispatches: %v, Nr_cancel_dispatches: %v ", data.Nr_kernel_dispatches, data.Nr_cancel_dispatches) +
-		fmt.Sprintf("Nr_bounce_dispatches: %v, Nr_failed_dispatches: %v", data.Nr_bounce_dispatches, data.Nr_failed_dispatches)
+		fmt.Sprintf("Nr_bounce_dispatches: %v, Nr_failed_dispatches: %v", data.Nr_bounce_dispatches, data.Nr_failed_dispatches) +
+		fmt.Sprintf("Nr_sched_congested: %v", data.Nr_sched_congested)
 }
 
 type BssMap struct {

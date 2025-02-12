@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"runtime/debug"
 	"syscall"
 
 	"encoding/binary"
@@ -24,6 +25,33 @@ func endian() binary.ByteOrder {
 	}
 
 	return binary.BigEndian
+}
+
+const (
+	MAX_LATENCY_WEIGHT = 1000
+	SLICE_NS_MIN       = 500 * 1000  // 500us
+	SLICE_NS_DEFAULT   = 5000 * 1000 // 5ms
+	SCX_ENQ_WAKEUP     = 1
+)
+
+func calcLatencyWeight(nvcsw uint64, flags uint64) uint64 {
+	baseWeight := min(nvcsw, MAX_LATENCY_WEIGHT)
+	weightMultiplier := uint64(1)
+	if flags&SCX_ENQ_WAKEUP != 0 {
+		weightMultiplier = 2
+	}
+	return (baseWeight * weightMultiplier) + 1
+}
+
+func calcSliceNs(queueLen int, latencyWeight uint64) uint64 {
+	// 基本時間片
+	waiting := uint64(queueLen + 1)
+	baseSlice := SLICE_NS_DEFAULT / waiting
+
+	// 根據 latency weight 調整時間片
+	slice := baseSlice * latencyWeight / MAX_LATENCY_WEIGHT
+
+	return max(slice, SLICE_NS_MIN)
 }
 
 var taskPool []*core.QueuedTask = []*core.QueuedTask{}
@@ -49,6 +77,7 @@ func GetTaskFromPool() *core.QueuedTask {
 
 func init() {
 	runtime.GOMAXPROCS(1)
+	debug.SetMaxThreads(10)
 }
 
 func main() {
@@ -97,11 +126,13 @@ func main() {
 			DrainQueuedTask(bpfModule)
 			t := GetTaskFromPool()
 			if t == nil {
+				err = bpfModule.NotifyComplete(uint64(len(taskPool)))
+				if err != nil {
+					log.Printf("NotifyComplete failed: %v", err)
+				}
 				runtime.Gosched()
 				continue
 			}
-			// _, bss := bpfModule.GetBssData()
-			// log.Printf("bss: %v", bss.String())
 			task := core.NewDispatchedTask(t)
 			err, cpu := bpfModule.SelectCPU(t)
 			if err != nil {
@@ -110,16 +141,15 @@ func main() {
 			if cpu < 0 {
 				cpu = core.RL_CPU_ANY
 			}
-			task.Cpu = cpu
-			task.SliceNs = 20000000
-			task.Vtime = 18446744073709551615
-			log.Printf("selected task: %d, cpu: %v, old cpu: %v, dp: %v", task.Pid, cpu, t.Cpu, task)
+
+			latencyWeight := calcLatencyWeight(t.Nvcsw, t.Flags)
+			task.SliceNs = calcSliceNs(len(taskPool), latencyWeight)
+
+			vslice := task.SliceNs * 100 / t.Weight
+			task.Vtime = t.Vtime + vslice
+			log.Printf("selected task: %d, cpu: %v, sliceNs: %v, weight: %v, nvcsw: %v",
+				task.Pid, cpu, task.SliceNs, t.Weight, t.Nvcsw)
 			bpfModule.DispatchTask(task)
-			err = bpfModule.NotifyComplete(uint64(len(taskPool)))
-			if err != nil {
-				log.Printf("NotifyComplete failed: %v", err)
-			}
-			runtime.Gosched()
 		}
 	}()
 

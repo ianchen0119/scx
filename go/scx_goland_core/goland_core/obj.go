@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
+	"syscall"
 
 	bpf "github.com/aquasecurity/libbpfgo"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -20,6 +23,10 @@ type Sched struct {
 	dispatch   chan []byte
 	selectCpu  *bpf.BPFProg
 	siblingCpu *bpf.BPFProg
+}
+
+func init() {
+	unix.Mlockall(syscall.MCL_CURRENT | syscall.MCL_FUTURE)
 }
 
 func LoadSched(objPath string) *Sched {
@@ -38,8 +45,30 @@ func LoadSched(objPath string) *Sched {
 	s := &Sched{
 		mod: bpfModule,
 	}
-
 	iters := bpfModule.Iterator()
+	for {
+		prog := iters.NextProgram()
+		if prog == nil {
+			break
+		}
+		if prog.Name() == "kprobe_handle_mm_fault" {
+			log.Println("attach kprobe_handle_mm_fault")
+			_, err := prog.AttachGeneric()
+			if err != nil {
+				log.Panicf("attach kprobe_handle_mm_fault failed: %v", err)
+			}
+			continue
+		}
+		if prog.Name() == "kretprobe_handle_mm_fault" {
+			log.Println("attach kretprobe_handle_mm_fault")
+			_, err := prog.AttachGeneric()
+			if err != nil {
+				log.Panicf("attach kretprobe_handle_mm_fault failed: %v", err)
+			}
+			continue
+		}
+	}
+	iters = bpfModule.Iterator()
 	for {
 		m := iters.NextMap()
 		if m == nil {
@@ -48,15 +77,15 @@ func LoadSched(objPath string) *Sched {
 		if m.Name() == "main.bss" {
 			s.bss = &BssMap{m}
 		} else if m.Name() == "queued" {
-			s.queue = make(chan []byte)
-			rb, err := s.Module().InitRingBuf("queued", s.queue)
+			s.queue = make(chan []byte, 200)
+			rb, err := s.mod.InitRingBuf("queued", s.queue)
 			if err != nil {
 				panic(err)
 			}
 			rb.Poll(300)
 		} else if m.Name() == "dispatched" {
-			s.dispatch = make(chan []byte, 4096)
-			urb, err := s.Module().InitUserRingBuf("dispatched", s.dispatch)
+			s.dispatch = make(chan []byte, 200)
+			urb, err := s.mod.InitUserRingBuf("dispatched", s.dispatch)
 			if err != nil {
 				panic(err)
 			}
@@ -154,8 +183,4 @@ func (s *Sched) Attach() error {
 
 func (s *Sched) Close() {
 	s.mod.Close()
-}
-
-func (s *Sched) Module() *bpf.Module {
-	return s.mod
 }

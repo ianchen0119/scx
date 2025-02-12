@@ -148,7 +148,7 @@ struct {
  * Drained by the kernel in .dispatch().
  */
 struct {
-        __uint(type, BPF_MAP_TYPE_USER_RINGBUF);
+    __uint(type, BPF_MAP_TYPE_USER_RINGBUF);
 	__uint(max_entries, MAX_ENQUEUED_TASKS *
 				sizeof(struct dispatched_task_ctx));
 } dispatched SEC(".maps");
@@ -304,6 +304,11 @@ static inline bool is_usersched_task(const struct task_struct *p)
 	return p->pid == usersched_pid;
 }
 
+static inline bool is_belong_usersched_task(const struct task_struct *p)
+{
+	return p->tgid == usersched_pid;
+}
+
 /*
  * Return true if the target task @p is a kernel thread.
  */
@@ -422,7 +427,6 @@ static s32 pick_idle_cpu(struct task_struct *p, s32 prev_cpu)
 	if (p->nr_cpus_allowed == 1 || p->migration_disabled) {
 		if (scx_bpf_test_and_clear_cpu_idle(prev_cpu))
 			return prev_cpu;
-
 		return -ENOENT;
 	}
 
@@ -591,7 +595,7 @@ static void dispatch_task(const struct dispatched_task_ctx *task)
 
 	/* Ignore entry if the task doesn't exist anymore */
 	p = bpf_task_from_pid(task->pid);
-	if (!p)
+	if (!p)		
 		return;
 
 	dbg_msg("dispatch: pid=%d (%s) cpu=0x%lx vtime=%llu slice=%llu",
@@ -795,6 +799,22 @@ void BPF_STRUCT_OPS(goland_enqueue, struct task_struct *p, u64 enq_flags)
 		return;
 	}
 
+	if (is_kthread(p)) {
+		scx_bpf_dsq_insert_vtime(p, SHARED_DSQ,
+					 SCX_SLICE_DFL, 0, enq_flags);
+		__sync_fetch_and_add(&nr_kernel_dispatches, 1);
+		kick_task_cpu(p);
+		return;
+	}
+
+	if (is_belong_usersched_task(p)) {
+		scx_bpf_dsq_insert_vtime(p, SHARED_DSQ,
+					 SCX_SLICE_DFL, 0, enq_flags);
+		__sync_fetch_and_add(&nr_kernel_dispatches, 1);
+		kick_task_cpu(p);
+		return;
+	}
+
 	/*
 	 * Bypass user-space scheduling for faulting tasks to prevent potential
 	 * deadlock conditions. They can just be dispatched to the shared DSQ
@@ -940,7 +960,6 @@ void BPF_STRUCT_OPS(goland_running, struct task_struct *p)
 	s32 cpu = scx_bpf_task_cpu(p);
 
 	dbg_msg("start: pid=%d (%s) cpu=%ld", p->pid, p->comm, cpu);
-
 	/*
 	 * Ensure time slice never exceeds slice_ns when a task is started on a
 	 * CPU.
